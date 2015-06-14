@@ -1,0 +1,11 @@
+{
+  "name": "Bunkerbox",
+  "version": "0.0.1",
+  "author": "Jim Heising <jheising@gmail.com>",
+  "dependencies": {
+    "underscore": "*",
+    "node330": "git+https://github.com/jheising/node330.git",
+    "optimist": "*",
+    "pcduino": "*"
+  }
+}
