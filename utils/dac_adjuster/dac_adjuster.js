@@ -1,4 +1,4 @@
-var ds18b20 = require("./build/Release/ds18b20");
+var ds18b20 = require("./../../build/Release/ds18b20");
 
 var sensorInterface = new si();
 

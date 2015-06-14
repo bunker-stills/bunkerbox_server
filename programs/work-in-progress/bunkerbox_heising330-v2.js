@@ -1,4 +1,4 @@
-var si = require("./../sensor_interface.js");
+var si = require("./../../sensor_interface.js");
 var sensor_interface = new si();
 var _ = require("underscore");
 
