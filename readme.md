@@ -36,7 +36,7 @@ To run the watchdog program:
 
 ### To access the web interface
 
-Point your browser to: http://<ip_of_controller>:3300
+Point your browser to: http://[ip_of_controller]:3300
 
 ### Some things to do
 
