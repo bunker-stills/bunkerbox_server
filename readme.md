@@ -31,3 +31,7 @@ The main `bunkerbox_run.js` program writes a timestamp to a file every second an
 To run the watchdog program:
 
 `$ node bunkerbox_watchdog`
+
+### Some things to do
+
+- Create a simulator for the daughterboard interface so that you can create simulated DAC and temperature probes.
