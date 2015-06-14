@@ -18,7 +18,7 @@ Build the native code extensions to interface with the sensor daughterboard:
 
 ### To run the server
 
-`$ node bunkerbox_run -p <path_to_program_file>`
+`$ node bunkerbox_run -p {path_to_program_file}`
 
 The standard program for the current Heising-330 still is at `programs/bunkerbox_heising330.js`. So in this case:
 
@@ -36,7 +36,7 @@ To run the watchdog program:
 
 ### To access the web interface
 
-Point your browser to: http://[ip_of_controller]:3300
+Point your browser to: http://{ip address of controller}:3300
 
 ### Some things to do
 
