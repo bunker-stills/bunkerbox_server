@@ -12,7 +12,9 @@ Install all of the project dependencies:
 
 Build the native code extensions to interface with the sensor daughterboard:
 
-`$ npm build`
+`$ node-gyp configure`
+
+`$ node-gyp build`
 
 ### To run the server
 
