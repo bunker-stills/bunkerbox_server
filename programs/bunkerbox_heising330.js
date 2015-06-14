@@ -247,8 +247,6 @@ function WARMUP_STATE_ENTER(config, startTime, mainHeaterSetPointOffset, operati
 
     mainHeaterSetPointOffset.setValue(config.getSetting("warmup_main_heater_offset"));
 
-    var now = new Date();
-    startTime.setValue(now.toISOString());
     sumpTempWarmupReachedTime = 0;
 
     operationState.setValue("WARMUP");
@@ -308,7 +306,10 @@ function RUN_READY_STATE_LOOP(node330, enableRunSwitch, config, ambientPressure,
     }
 }
 
-function RUNNING_STATE_ENTER(config, operationState, preHeaterPGain, preHeaterIGain, preHeaterDGain, mainHeaterPGain, mainHeaterIGain, mainHeaterDGain, mainHeaterSetPointOffset) {
+function RUNNING_STATE_ENTER(config, startTime, operationState, preHeaterPGain, preHeaterIGain, preHeaterDGain, mainHeaterPGain, mainHeaterIGain, mainHeaterDGain, mainHeaterSetPointOffset) {
+    var now = new Date();
+    startTime.setValue(now.toISOString());
+
     preHeaterPGain.setValue(config.getSetting("pre_heater_p_gain"));
     preHeaterIGain.setValue(config.getSetting("pre_heater_i_gain"));
     preHeaterDGain.setValue(config.getSetting("pre_heater_d_gain"));
