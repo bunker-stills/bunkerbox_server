@@ -34,6 +34,10 @@ To run the watchdog program:
 
 `$ node bunkerbox_watchdog`
 
+### To access the web interface
+
+Point your browser to: http://<ip_of_controller>:3300
+
 ### Some things to do
 
 - Create a simulator for the daughterboard interface so that you can create simulated DAC and temperature probes.
