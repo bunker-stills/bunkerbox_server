@@ -152,32 +152,37 @@ module.exports.setup = function (node330, startTime, switch1, config, calculated
 
         var physicalComponent = createPhysicalComponentForSubsensor(node330, newSensorName, newSensorValueType);
 
+        var component;
+
         if (newSensorName === config.getSetting("headsTemp_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, headsTemp);
+            component = headsTemp;
         }
         else if (newSensorName === config.getSetting("preHeaterTemp_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, preHeaterTemp);
+            component = preHeaterTemp;
         }
         else if (newSensorName === config.getSetting("heartsTemp_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, heartsTemp);
+            component = heartsTemp;
         }
         else if (newSensorName === config.getSetting("tailsTemp_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, tailsTemp);
-        }
-        else if (newSensorName === config.getSetting("heartsTemp_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, heartsTemp);
+            component = tailsTemp;
         }
         else if (newSensorName === config.getSetting("intermediateTemp_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, intermediateTemp);
+            component = intermediateTemp;
         }
         else if (newSensorName === config.getSetting("ambientPressure_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, ambientPressure);
+            component = ambientPressure;
         }
         else if (newSensorName === config.getSetting("ambientTemp_sensor")) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, ambientTemp);
+            component = ambientTemp;
         }
         else if (sumpTempSensorMappings[newSensorName]) {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, sumpTempSensorMappings[newSensorName]);
+            component = sumpTempSensorMappings[newSensorName];
+        }
+
+        if(component)
+        {
+            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, component);
+            component.setCalibrationOffset(config.getSetting(newSensorName + "_calibration", 0)); // Check for a calibration setting for the sensor and set it
         }
     });
 
