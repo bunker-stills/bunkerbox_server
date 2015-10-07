@@ -10,6 +10,8 @@ var spawn = require('child_process').spawn;
 var readline = require('readline');
 var ds18b20 = require("./build/Release/ds18b20");
 
+var RESTART_RETRIES = 20;
+
 var sensorInterface =  function(node330)
 {
     var self = this;
@@ -139,7 +141,7 @@ var sensorInterface =  function(node330)
                     // If this is a DS18B20 sensor, try restarting the interface
                     if(sensorValues[sensorName].isDS18B20)
                     {
-                        if(sensorValues[sensorName].timeouts >= 4) // If we've tried re-connecting 4 times and we still don't have a temperature, then we should timeout
+                        if(sensorValues[sensorName].timeouts >= RESTART_RETRIES) // If we've tried re-connecting X times and we still don't have a temperature, then we should timeout
                         {
                             sensorValues[sensorName].value = -17.78;
                             self.emit('timeout', sensorName);
