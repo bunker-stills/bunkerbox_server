@@ -16,6 +16,8 @@ Build the native code extensions to interface with the sensor daughterboard:
 
 `$ node-gyp build`
 
+`$ apt-get install i2c-tools python-smbus`
+
 ### To run the server
 
 `$ node bunkerbox_run -p {path_to_program_file}`
@@ -23,6 +25,10 @@ Build the native code extensions to interface with the sensor daughterboard:
 The standard program for the current Heising-330 still is at `programs/bunkerbox_heising330.js`. So in this case:
 
 `$ node bunkerbox_run -p programs/bunkerbox_heising330.js`
+
+### To run at startup
+
+Copy the files in the `./boot` directory to `/etc/init`
 
 ### Running the watchdog program
 
