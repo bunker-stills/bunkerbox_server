@@ -2,6 +2,7 @@ var mcp4922 = require("./build/Release/mcp4922");
 var fs = require("fs");
 var pcduino = require("pcduino");
 var digital = pcduino.digital;
+var running = require('is-running');
 
 var DAC_ENABLE_PIN = 9;
 var TIMEOUT_IN_MS = 5000;
@@ -52,7 +53,7 @@ function goFailsafe()
 
 var timeout = setInterval(function(){
 
-	fs.readFile("/tmp/bunker_watchdog.io", function(err, data)
+	fs.readFile("./bunkerbox.pid", function(err, data)
 	{
 		try
 		{
@@ -62,35 +63,18 @@ var timeout = setInterval(function(){
 				return;
 			}
 
-			var watchdogTime = Number(data);
+			var pid = Number(data);
 
-			var currentTime = Date.now();
-
-			if(watchdogTime > currentTime)
+			if(!running(pid))
 			{
 				goFailsafe();
-				return;
-			}
-
-            var timeDelta = currentTime - watchdogTime;
-
-			if(timeDelta >= TIMEOUT_IN_MS)
-			{
-                timeoutCount++;
-
-                // If the timeout occurs a certain number of times, we should go into failsafe
-                if(timeoutCount >= TIMEOUT_COUNT_MAX)
-                {
-                    goFailsafe();
-                }
-
 				return;
 			}
 
 			if(inFailsafe)
 			{
 				var date = new Date();
-				console.log("Watchdog emerged from failsafe at " + date.toLocaleString() + " after program halt of " + (timeDelta / 1000) + " seconds.");
+				console.log("Watchdog emerged from failsafe at " + date.toLocaleString());
 			}
 
 			inFailsafe = false;
@@ -98,6 +82,7 @@ var timeout = setInterval(function(){
 		}
 		catch(e)
 		{
+			console.log("Watchdog Error: " + e.toString());
 			goFailsafe();
 		}
 	});

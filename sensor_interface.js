@@ -31,7 +31,7 @@ var sensorInterface =  function(node330)
 		{pin: 2, output: 0}
 	];
 
-    function updateSensorValue(sensorName, value, valueType)
+    function updateSensorValue(sensorName, sensorType, value, valueType)
     {
         var isNew = false;
 
@@ -48,7 +48,7 @@ var sensorInterface =  function(node330)
 
         if(isNew)
         {
-            self.emit('new_sensor', sensorName, valueType);
+            self.emit('new_sensor', sensorName, valueType, sensorType);
         }
     }
 
@@ -63,7 +63,7 @@ var sensorInterface =  function(node330)
 	    {
 		    _.each(temps, function(temp, probeID)
 		    {
-			    updateSensorValue(probeID, temp, node330_value_types.TEMP_IN_C);
+			    updateSensorValue(probeID, "TEMPERATURE", temp, node330_value_types.TEMP_IN_C);
                 sensorValues[probeID].isDS18B20 = true;
 		    });
 
@@ -108,8 +108,8 @@ var sensorInterface =  function(node330)
 			    {
 					var data = JSON.parse(line);
 
-				    updateSensorValue("AMB_PRESSURE", data.press / 100.0, node330_value_types.PRES_IN_MBAR);
-				    updateSensorValue("AMB_TEMP", data.temp, node330_value_types.TEMP_IN_C);
+				    updateSensorValue("AMB_PRESSURE", "PRESSURE", data.press / 100.0, node330_value_types.PRES_IN_MBAR);
+				    updateSensorValue("AMB_TEMP", "TEMPERATURE", data.temp, node330_value_types.TEMP_IN_C);
 			    }
 			    catch(e)
 			    {

@@ -22,7 +22,7 @@ createPhysicalComponentForSubsensor = function (node330, sensorName, valueType) 
     return node330.createPhysicalComponentWithValueFunction(valueType, function () {
         return sensor_interface.getSensorValue(sensorName);
     });
-}
+};
 
 module.exports.setup = function (node330, startTime, switch1, config, calculatedPreheaterSetPoint, floatSwitch, startStopSwitch, enableRunSwitch, headsTemp, preHeaterTemp, heartsTemp, tailsTemp, intermediateTemp, sumpTempPrimarySensor, calculatedSumpTemp, ambientTemp, ambientPressure, preHeaterPID, mainHeaterPID, headsSetPoint, tailsSetPoint, headsSetPointScale, tailsSetPointScale, mainHeaterSetPointOffset, pumpFlowRate, preHeaterPower, mainHeaterPower, mainHeaterPGain, mainHeaterIGain, mainHeaterDGain, preHeaterPGain, preHeaterIGain, preHeaterDGain, mainHeaterIntegral, preHeaterIntegral, operationState) {
 
