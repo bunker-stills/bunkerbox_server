@@ -10,9 +10,6 @@ if (!sim_mode) {
     var sensor_interface;
 }
 
-var pumpChannel = 0;
-var mainHeaterChannel = 0;
-var preHeaterChannel = 0;
 var pids = [];
 var temp_probes = [];
 var mode;
@@ -221,7 +218,7 @@ module.exports.setup = function (node330,
 
     pids.push(create_PID_interface(node330, config, preHeaterPID, "preHeater", config.getSetting("preHeaterChannel")));
     pids.push(create_PID_interface(node330, config, mainHeaterPID, "mainHeater", config.getSetting("mainHeaterChannel")));
-    pids.push(create_PID_interface(node330, config, mainHeaterPID, "pumpPID", config.getSetting("pumpChannel")));
+    pids.push(create_PID_interface(node330, config, pumpPID, "pump", config.getSetting("pumpChannel")));
 
     custom_functions.push(create_custom_function(node330, config, "function1"));
     custom_functions.push(create_custom_function(node330, config, "function2"));
