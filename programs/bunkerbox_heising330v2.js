@@ -129,7 +129,7 @@ function update_process_sensor_for_pid(node330, pid_info)
     }
     else
     {
-        pid_info.process_sensor.setValue(undefined);
+        pid_info.process_sensor.setValue("");
         pid_info.enable.setValue(false);
     }
 }
@@ -314,7 +314,15 @@ module.exports.loop = function (node330,
             var sandbox = _.omit(component_values, [custom_function.code.name]);
             try {
                 custom_function.script.runInNewContext(sandbox);
-                custom_function.output.setValue(sandbox["_return_value"]);
+
+                var return_val = sandbox["_return_value"];
+
+                if(_.isUndefined(return_val))
+                {
+                    return_val = "";
+                }
+
+                custom_function.output.setValue(return_val);
             }
             catch(err)
             {
