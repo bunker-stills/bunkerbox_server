@@ -1,7 +1,7 @@
 var _ = require("underscore");
 var vm = require('vm');
 
-var sim_mode = true;
+var sim_mode = !_.isUndefined(process.env.SIM_MODE);
 
 if (!sim_mode) {
     var si = require("./../sensor_interface.js");
@@ -50,7 +50,29 @@ function create_PID_interface(node330, config, pid_component, id, dac_channel) {
     };
 
     pid_info.enable = node330.createVirtualComponent(id + "PIDEnable", node330.valueTypes.SWITCH);
-    node330.exposeVirtualComponentToViewers(pid_info.enable, false);
+    pid_info.enable.on("value_set", function(new_value){
+
+        if(new_value == true)
+        {
+            node330.setVirtualComponentReadOnly(pid_info.cv, true);
+            node330.setVirtualComponentReadOnly(pid_info.integral, true);
+        }
+        else {
+            node330.setVirtualComponentReadOnly(pid_info.cv, false);
+            node330.setVirtualComponentReadOnly(pid_info.integral, false);
+        }
+
+        // If the PID was previously running, go ahead and reset some things
+        if(pid_info.is_running)
+        {
+            pid_info.pid.reset();
+            pid_info.cv.setValue(0);
+            pid_info.integral.setValue(0);
+        }
+
+        pid_info.is_running = new_value;
+    });
+    node330.exposeVirtualComponentToViewers(pid_info.enable, true);
 
     pid_info.process_sensor = node330.createVirtualComponent(id + "ProcessSensor", node330.valueTypes.STRING);
     pid_info.process_sensor.setValue(config.getSetting(id + "_process_sensor", ""));
@@ -86,6 +108,8 @@ function create_PID_interface(node330, config, pid_component, id, dac_channel) {
     pid_info.cv = node330.createVirtualComponent(id + "CV", node330.valueTypes.INTEGER);
     node330.exposeVirtualComponentToViewers(pid_info.cv, true);
 
+    pid_info.is_running = false;
+
     return pid_info;
 }
 
@@ -95,26 +119,25 @@ function set_dac_output(dac_channel, cv) {
     }
 }
 
+function update_process_sensor_for_pid(node330, pid_info)
+{
+    var process_sensor = node330.getVirtualComponentNamed(pid_info.process_sensor.getValue());
+
+    // Don't allow the PID to be enabled if there is no process sensor
+    if (process_sensor) {
+        pid_info.process_value.setValue(Number(process_sensor.getValue()));
+    }
+    else
+    {
+        pid_info.process_sensor.setValue(undefined);
+        pid_info.enable.setValue(false);
+    }
+}
+
 function during_MANUAL(node330) {
     _.each(pids, function (pid_info) {
 
-        var process_sensor = node330.getVirtualComponentNamed(pid_info.process_sensor.getValue());
-
-        // Don't allow the PID to be enabled if there is no process sensor
-        if (process_sensor) {
-            pid_info.process_value.setValue(Number(process_sensor.getValue()));
-        }
-        else
-        {
-            pid_info.process_sensor.setValue(undefined);
-            pid_info.enable.setValue(false);
-        }
-
         if (pid_info.enable.getValue()) {
-            // CV and integral will be set by PID
-            node330.setVirtualComponentReadOnly(pid_info.cv, true);
-            node330.setVirtualComponentReadOnly(pid_info.integral, true);
-
             // Process our PID
             pid_info.pid.setControlValueLimits(pid_info.cv_min.getValue(), pid_info.cv_max.getValue(), 0);
             pid_info.pid.setProportionalGain(pid_info.p_gain.getValue());
@@ -124,11 +147,12 @@ function during_MANUAL(node330) {
 
             var new_cv = Math.round(pid_info.pid.update(pid_info.process_value.getValue()));
             pid_info.cv.setValue(new_cv);
+
+            pid_info.integral.setValue(pid_info.pid.getIntegral());
         }
         else {
-            // CV and integral can be manually set
-            node330.setVirtualComponentReadOnly(pid_info.cv, false);
-            node330.setVirtualComponentReadOnly(pid_info.integral, false);
+            // Set our integral to whatever the user sets it to
+            pid_info.pid.setIntegral(pid_info.integral.getValue());
         }
 
         set_dac_output(pid_info.dac_channel, pid_info.cv.getValue());
@@ -162,7 +186,14 @@ module.exports.setup = function (node330,
         sensor_interface.begin();
         sensor_interface.on("new_sensor", function (newSensorName, newSensorValueType, sensorType) {
 
-            node330.logInfo("Found new sensor " + newSensorName);
+            var virtualSensorName = newSensorName;
+
+            if(sensorType == "TEMPERATURE")
+            {
+                virtualSensorName = "TEMP_" + newSensorName;
+            }
+
+            node330.logInfo("Found new sensor " + virtualSensorName);
 
             var physical_sensor = node330.createPhysicalComponentWithValueFunction(newSensorValueType, function () {
                 return sensor_interface.getSensorValue(newSensorName);
@@ -174,11 +205,11 @@ module.exports.setup = function (node330,
                 virtual_type = node330.valueTypes.PRES_IN_MBAR;
             }
 
-            var virtual_sensor = node330.createVirtualComponent(newSensorName, virtual_type);
+            var virtual_sensor = node330.createVirtualComponent(virtualSensorName, virtual_type);
 
             node330.mapPhysicalComponentToVirtualComponent(physical_sensor, virtual_sensor);
 
-            var virtual_sensor_calibration = node330.createVirtualComponent(newSensorName + "Calibration", virtual_type);
+            var virtual_sensor_calibration = node330.createVirtualComponent(virtualSensorName + "_CALIBRATION", virtual_type);
             virtual_sensor_calibration.on("value_set", function (new_value) {
                 virtual_sensor.setCalibrationOffset(new_value);
             });
@@ -199,6 +230,25 @@ module.exports.setup = function (node330,
     }
 
     mode = node330.createVirtualComponent("mode", node330.valueTypes.STRING);
+    mode.on("value_set", function(new_value){
+
+        // If set to manual, allow PIDs to be enabled and CVs set, otherwise don't
+        if(new_value.toUpperCase() == "MANUAL")
+        {
+            _.each(pids, function (pid_info) {
+                node330.setVirtualComponentReadOnly(pid_info.enable, false);
+                node330.setVirtualComponentReadOnly(pid_info.cv, false);
+            });
+        }
+        else
+        {
+            _.each(pids, function (pid_info) {
+                node330.setVirtualComponentReadOnly(pid_info.enable, true);
+                node330.setVirtualComponentReadOnly(pid_info.cv, true);
+            });
+        }
+
+    });
     mode.setValue("IDLE");
     node330.exposeVirtualComponentToViewers(mode, false);
 
@@ -231,6 +281,11 @@ module.exports.setup = function (node330,
 module.exports.loop = function (node330,
                                 config,
                                 floatSwitch) {
+
+    _.each(pids, function (pid_info) {
+        update_process_sensor_for_pid(node330, pid_info);
+    });
+
     if (!sim_mode) {
         floatSwitch.setValue(digital.digitalRead(config.getSetting("float_switch_pin")));
 
@@ -253,7 +308,6 @@ module.exports.loop = function (node330,
     });
 
     // Evaluate our custom functions
-
     _.each(custom_functions, function(custom_function){
         if(custom_function.script)
         {
