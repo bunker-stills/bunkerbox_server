@@ -1,4 +1,5 @@
 var _ = require("underscore");
+var pid = require("./../utils/pid_new");
 var vm = require('vm');
 
 var sim_mode = !_.isUndefined(process.env.SIM_MODE);
@@ -43,11 +44,14 @@ function create_custom_function(node330, config, id)
     return custom_function;
 }
 
-function create_PID_interface(node330, config, pid_component, id, dac_channel) {
+function create_PID_interface(node330, config, id, dac_channel) {
     var pid_info = {
-        pid: pid_component,
+        pid: new pid(0,0,0,0,0,'direct'),
         dac_channel: dac_channel
     };
+
+    pid_info.pid.setSampleTime(1000);
+    pid_info.pid.setMode("auto");
 
     pid_info.enable = node330.createVirtualComponent(id + "PIDEnable", node330.valueTypes.SWITCH);
     pid_info.enable.on("value_set", function(new_value){
@@ -73,6 +77,12 @@ function create_PID_interface(node330, config, pid_component, id, dac_channel) {
         pid_info.is_running = new_value;
     });
     node330.exposeVirtualComponentToViewers(pid_info.enable, true);
+
+    pid_info.reverse = node330.createVirtualComponent(id + "PIDReverse", node330.valueTypes.SWITCH);
+    pid_info.reverse.on("value_set", function(new_value){
+        pid_info.pid.setControllerDirection(new_value ? "reverse" : "direct");
+    });
+    node330.exposeVirtualComponentToViewers(pid_info.reverse, false);
 
     pid_info.process_sensor = node330.createVirtualComponent(id + "ProcessSensor", node330.valueTypes.STRING);
     pid_info.process_sensor.setValue(config.getSetting(id + "_process_sensor", ""));
@@ -130,6 +140,7 @@ function update_process_sensor_for_pid(node330, pid_info)
     else
     {
         pid_info.process_sensor.setValue("");
+        pid_info.process_value.setValue(null);
         pid_info.enable.setValue(false);
     }
 }
@@ -139,20 +150,21 @@ function during_MANUAL(node330) {
 
         if (pid_info.enable.getValue()) {
             // Process our PID
-            pid_info.pid.setControlValueLimits(pid_info.cv_min.getValue(), pid_info.cv_max.getValue(), 0);
-            pid_info.pid.setProportionalGain(pid_info.p_gain.getValue());
-            pid_info.pid.setIntegralGain(pid_info.i_gain.getValue());
-            pid_info.pid.setDerivativeGain(pid_info.d_gain.getValue());
-            pid_info.pid.setDesiredValue(pid_info.set_point.getValue());
+            pid_info.pid.setOutputLimits(pid_info.cv_min.getValue() || 0, pid_info.cv_max.getValue() || 0);
+            pid_info.pid.setTunings(pid_info.p_gain.getValue() || 0, pid_info.i_gain.getValue() || 0, pid_info.d_gain.getValue() || 0);
+            pid_info.pid.setPoint(pid_info.set_point.getValue() || 0);
+            pid_info.pid.setInput(pid_info.process_value.getValue() || 0);
 
-            var new_cv = Math.round(pid_info.pid.update(pid_info.process_value.getValue()));
+            pid_info.pid.compute();
+
+            var new_cv = Math.round(pid_info.pid.getOutput());
             pid_info.cv.setValue(new_cv);
 
-            pid_info.integral.setValue(pid_info.pid.getIntegral());
+            pid_info.integral.setValue(pid_info.pid.getITerm());
         }
         else {
             // Set our integral to whatever the user sets it to
-            pid_info.pid.setIntegral(pid_info.integral.getValue());
+            pid_info.pid.setITerm(pid_info.integral.getValue() || 0);
         }
 
         set_dac_output(pid_info.dac_channel, pid_info.cv.getValue());
@@ -174,9 +186,6 @@ function during_COOLDOWN(node330) {
 }
 
 module.exports.setup = function (node330,
-                                 preHeaterPID,
-                                 mainHeaterPID,
-                                 pumpPID,
                                  floatSwitch,
                                  config) {
     if (!sim_mode) {
@@ -266,9 +275,9 @@ module.exports.setup = function (node330,
 
     node330.exposeVirtualComponentToViewers(floatSwitch, true);
 
-    pids.push(create_PID_interface(node330, config, preHeaterPID, "preHeater", config.getSetting("preHeaterChannel")));
-    pids.push(create_PID_interface(node330, config, mainHeaterPID, "mainHeater", config.getSetting("mainHeaterChannel")));
-    pids.push(create_PID_interface(node330, config, pumpPID, "pump", config.getSetting("pumpChannel")));
+    pids.push(create_PID_interface(node330, config, "preHeater", config.getSetting("preHeaterChannel")));
+    pids.push(create_PID_interface(node330, config, "mainHeater", config.getSetting("mainHeaterChannel")));
+    pids.push(create_PID_interface(node330, config, "pump", config.getSetting("pumpChannel")));
 
     custom_functions.push(create_custom_function(node330, config, "function1"));
     custom_functions.push(create_custom_function(node330, config, "function2"));
