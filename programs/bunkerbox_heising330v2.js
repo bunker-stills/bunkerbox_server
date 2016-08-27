@@ -22,9 +22,22 @@ function create_custom_function(node330, config, id)
     var custom_function = {};
     custom_function.code = node330.createVirtualComponent(id + "Code", node330.valueTypes.STRING);
     custom_function.code.on("value_set", function(new_value){
+
+        if(!new_value)
+        {
+            custom_function.script = undefined;
+
+            if(custom_function.output)
+            {
+                custom_function.output.setValue("");
+            }
+
+            return;
+        }
+
         try
         {
-            var script_code = "function custom(){" + new_value + "}; _return_value = custom();";
+            var script_code = "var _return_value; function custom(){" + new_value + "}; _return_value = custom();";
             custom_function.script = vm.createScript(script_code);
             config.setSetting(id + "_code", new_value);
 
@@ -36,6 +49,9 @@ function create_custom_function(node330, config, id)
     });
     custom_function.code.setValue(config.getSetting(id + "_code", ""));
     node330.exposeVirtualComponentToViewers(custom_function.code, false);
+
+    custom_function.enable = node330.createVirtualComponent(id + "Enable", node330.valueTypes.SWITCH);
+    node330.exposeVirtualComponentToViewers(custom_function.enable, false);
 
     custom_function.output = node330.createVirtualComponent(id + "Output", node330.valueTypes.INTEGER);
     custom_function.output.setValue("");
@@ -92,7 +108,7 @@ function create_PID_interface(node330, config, id, dac_channel) {
     node330.exposeVirtualComponentToViewers(pid_info.process_sensor, false);
 
     pid_info.process_value = node330.createVirtualComponent(id + "ProcessValue", node330.valueTypes.INTEGER);
-    node330.exposeVirtualComponentToViewers(pid_info.process_value, true);
+    node330.exposeVirtualComponentToViewers(pid_info.process_value, false);
 
     pid_info.set_point = node330.createVirtualComponent(id + "SetPoint", node330.valueTypes.INTEGER);
     node330.exposeVirtualComponentToViewers(pid_info.set_point, false);
@@ -140,7 +156,7 @@ function update_process_sensor_for_pid(node330, pid_info)
     else
     {
         pid_info.process_sensor.setValue("");
-        pid_info.process_value.setValue(null);
+        pid_info.process_value.setValue("");
         pid_info.enable.setValue(false);
     }
 }
@@ -312,29 +328,33 @@ module.exports.loop = function (node330,
 
     // Get the current values of all of our components
     var component_values = {};
-    _.each(node330.exposedComponents, function(component){
+    _.each(node330.exposedComponents, function (component) {
+
+        // Remove any functions themselves from the list
+        if(_.find(custom_functions, function(custom_function){
+            return (component === custom_function.code || component === custom_function.output);
+            })){
+            return;
+        }
+
         component_values[component.name] = component.getValue();
     });
 
     // Evaluate our custom functions
-    _.each(custom_functions, function(custom_function){
-        if(custom_function.script)
-        {
-            var sandbox = _.omit(component_values, [custom_function.code.name]);
+    _.each(custom_functions, function (custom_function) {
+        if (custom_function.enable.getValue() && custom_function.script) {
+            component_values = _.omit(component_values, ["_return_value", "custom"]);
             try {
-                custom_function.script.runInNewContext(sandbox);
+                custom_function.script.runInNewContext(component_values);
+                custom_function.output.setValue(component_values["_return_value"]);
 
-                var return_val = sandbox["_return_value"];
-
-                if(_.isUndefined(return_val))
-                {
-                    return_val = "";
-                }
-
-                custom_function.output.setValue(return_val);
+                _.each(node330.exposedComponents, function (component) {
+                    if (!component.viewerReadOnly && !_.isUndefined(component_values[component.name]) && component.getValue() !== component_values[component.name]) {
+                        component.setValue(component_values[component.name]);
+                    }
+                });
             }
-            catch(err)
-            {
+            catch (err) {
                 custom_function.output.setValue("ERROR: " + err.toString());
             }
         }
