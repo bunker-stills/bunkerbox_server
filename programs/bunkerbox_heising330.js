@@ -1,529 +1,371 @@
 var _ = require("underscore");
-var si = require("./../sensor_interface.js");
-var pcduino = require("pcduino");
-var digital = pcduino.digital;
-var sensor_interface;
+var pid = require("./../utils/pid_new");
+var vm = require('vm');
 
-var tuningMode = false;
-var pumpChannel = 0;
-var mainHeaterChannel = 0;
-var preHeaterChannel = 0;
-var preHeaterCVMin;
-var preHeaterCVMax;
-var mainHeaterCVMin;
-var mainHeaterCVMax;
-var currentPreHeaterPower = 0;
-var currentMainHeaterPower = 0;
-var sumpTempSensorMappings = {};
-var started = false;
-var feedstockDepletionCount = 0;
+var sim_mode = !_.isUndefined(process.env.SIM_MODE);
 
-createPhysicalComponentForSubsensor = function (node330, sensorName, valueType) {
-    return node330.createPhysicalComponentWithValueFunction(valueType, function () {
-        return sensor_interface.getSensorValue(sensorName);
-    });
-};
+if (!sim_mode) {
+    var si = require("./../sensor_interface.js");
+    var pcduino = require("pcduino");
+    var digital = pcduino.digital;
+    var sensor_interface;
+}
 
-module.exports.setup = function (node330, startTime, switch1, config, calculatedPreheaterSetPoint, floatSwitch, startStopSwitch, enableRunSwitch, headsTemp, preHeaterTemp, heartsTemp, tailsTemp, intermediateTemp, sumpTempPrimarySensor, calculatedSumpTemp, ambientTemp, ambientPressure, preHeaterPID, mainHeaterPID, headsSetPoint, tailsSetPoint, headsSetPointScale, tailsSetPointScale, mainHeaterSetPointOffset, pumpFlowRate, preHeaterPower, mainHeaterPower, mainHeaterPGain, mainHeaterIGain, mainHeaterDGain, preHeaterPGain, preHeaterIGain, preHeaterDGain, mainHeaterIntegral, preHeaterIntegral, operationState) {
+var pids = [];
+var temp_probes = [];
+var mode;
+var float_switch_count = 0;
+var custom_functions = [];
 
-    sensor_interface = new si(node330);
+function create_custom_function(node330, config, id)
+{
+    var custom_function = {};
+    custom_function.code = node330.createVirtualComponent(id + "Code", node330.valueTypes.STRING);
+    custom_function.code.on("value_set", function(new_value){
 
-    digital.pinMode(config.getSetting("float_switch_pin"), digital.INPUT_PU);
-
-    tuningMode = config.getSetting("tuning_mode", true);
-
-    mainHeaterChannel = config.getSetting("mainHeaterChannel");
-    preHeaterChannel = config.getSetting("preHeaterChannel");
-    pumpChannel = config.getSetting("pumpChannel");
-
-    // Set all of our sensors to proper units
-    calculatedPreheaterSetPoint.setValueType(node330.valueTypes.TEMP_IN_F);
-    headsTemp.setValueType(node330.valueTypes.TEMP_IN_F);
-    preHeaterTemp.setValueType(node330.valueTypes.TEMP_IN_F);
-    heartsTemp.setValueType(node330.valueTypes.TEMP_IN_F);
-    tailsTemp.setValueType(node330.valueTypes.TEMP_IN_F);
-    intermediateTemp.setValueType(node330.valueTypes.TEMP_IN_F);
-
-    // Setup our sump temps
-    var sumpTempSensorCount = config.getSetting("sump_temp_sensor_count", 7);
-    for (var index = 1; index <= sumpTempSensorCount; index++) {
-        var sensorName = "sumpTemp" + index;
-        var sumpTempComponent = node330.createVirtualComponent(sensorName, node330.valueTypes.TEMP_IN_F);
-        node330.exposeVirtualComponentToViewers(sumpTempComponent);
-
-        var sensorMappingSetting = config.getSetting(sensorName + "_sensor");
-
-        if (sensorMappingSetting) {
-            sumpTempSensorMappings[sensorMappingSetting] = sumpTempComponent;
-        }
-    }
-
-    sumpTempPrimarySensor.setValueType(node330.valueTypes.STRING);
-    sumpTempPrimarySensor.setValue("");
-    calculatedSumpTemp.setValueType(node330.valueTypes.TEMP_IN_F);
-    ambientTemp.setValueType(node330.valueTypes.TEMP_IN_F);
-    ambientPressure.setValueType(node330.valueTypes.PRES_IN_MBAR);
-    headsSetPoint.setValueType(node330.valueTypes.TEMP_IN_F);
-    tailsSetPoint.setValueType(node330.valueTypes.TEMP_IN_F);
-    pumpFlowRate.setValueType(node330.valueTypes.RATE_IN_GALLONS_PER_HOUR);
-    preHeaterPower.setValueType(node330.valueTypes.PERCENT);
-    mainHeaterPower.setValueType(node330.valueTypes.PERCENT);
-    operationState.setValueType(node330.valueTypes.STRING);
-    startTime.setValueType(node330.valueTypes.STRING);
-
-    // Set any initial values
-    startStopSwitch.setValue(false);
-    enableRunSwitch.setValue(false);
-    mainHeaterSetPointOffset.setValue(config.getSetting("main_heater_setpoint_offset"));
-    pumpFlowRate.setValue(config.getSetting("default_pump_flow_rate_gph"));
-    mainHeaterPGain.setValue(config.getSetting("main_heater_p_gain"));
-    mainHeaterIGain.setValue(config.getSetting("main_heater_i_gain"));
-    mainHeaterDGain.setValue(config.getSetting("main_heater_d_gain"));
-    preHeaterPGain.setValue(config.getSetting("pre_heater_p_gain"));
-    preHeaterIGain.setValue(config.getSetting("pre_heater_i_gain"));
-    preHeaterDGain.setValue(config.getSetting("pre_heater_d_gain"));
-    headsSetPoint.setValue(config.getSetting("default_heads_set_point"));
-    tailsSetPoint.setValue(config.getSetting("default_tails_set_point"));
-    headsSetPointScale.setValue(config.getSetting("pre_heater_heads_set_point_scale"));
-    tailsSetPointScale.setValue(config.getSetting("main_heater_tails_set_point_scale"));
-
-    // Expose our values to the web viewer
-    node330.exposeVirtualComponentToViewers(startStopSwitch, false);
-    node330.exposeVirtualComponentToViewers(enableRunSwitch, false);
-    node330.exposeVirtualComponentToViewers(operationState);
-    node330.exposeVirtualComponentToViewers(floatSwitch);
-    node330.exposeVirtualComponentToViewers(calculatedPreheaterSetPoint);
-
-    if (tuningMode) {
-        node330.exposeVirtualComponentToViewers(mainHeaterSetPointOffset, false);
-        node330.exposeVirtualComponentToViewers(mainHeaterPGain, false);
-        node330.exposeVirtualComponentToViewers(mainHeaterIGain, false);
-        node330.exposeVirtualComponentToViewers(mainHeaterDGain, false);
-        node330.exposeVirtualComponentToViewers(mainHeaterIntegral, false);
-
-        node330.exposeVirtualComponentToViewers(preHeaterPGain, false);
-        node330.exposeVirtualComponentToViewers(preHeaterIGain, false);
-        node330.exposeVirtualComponentToViewers(preHeaterDGain, false);
-        node330.exposeVirtualComponentToViewers(preHeaterIntegral, false);
-
-        node330.exposeVirtualComponentToViewers(headsSetPoint, false);
-        node330.exposeVirtualComponentToViewers(tailsSetPoint, false);
-        node330.exposeVirtualComponentToViewers(pumpFlowRate, false);
-        node330.exposeVirtualComponentToViewers(headsSetPointScale, false);
-        node330.exposeVirtualComponentToViewers(tailsSetPointScale, false);
-    }
-
-    node330.exposeVirtualComponentToViewers(headsTemp);
-    node330.exposeVirtualComponentToViewers(preHeaterTemp);
-    node330.exposeVirtualComponentToViewers(heartsTemp);
-    node330.exposeVirtualComponentToViewers(tailsTemp);
-    node330.exposeVirtualComponentToViewers(intermediateTemp);
-    node330.exposeVirtualComponentToViewers(sumpTempPrimarySensor, false);
-    node330.exposeVirtualComponentToViewers(calculatedSumpTemp);
-    node330.exposeVirtualComponentToViewers(ambientTemp);
-    node330.exposeVirtualComponentToViewers(ambientPressure);
-    node330.exposeVirtualComponentToViewers(preHeaterPower);
-    node330.exposeVirtualComponentToViewers(mainHeaterPower);
-    node330.exposeVirtualComponentToViewers(startTime);
-
-    preHeaterCVMin = config.getSetting("pre_heater_cv_min");
-    preHeaterCVMax = config.getSetting("pre_heater_cv_max");
-    mainHeaterCVMin = config.getSetting("main_heater_cv_min");
-    mainHeaterCVMax = config.getSetting("main_heater_cv_max");
-
-    // Setup our pre heater PID
-    preHeaterPID.setControlValueLimits(preHeaterCVMin, preHeaterCVMax, 0);
-    preHeaterPID.setProportionalGain(config.getSetting("pre_heater_p_gain"));
-    preHeaterPID.setIntegralGain(config.getSetting("pre_heater_i_gain"));
-    preHeaterPID.setDerivativeGain(config.getSetting("pre_heater_d_gain"));
-    preHeaterPID.setDesiredValue(0);
-
-    // Setup our main heater PID
-    mainHeaterPID.setControlValueLimits(mainHeaterCVMin, mainHeaterCVMax, 0);
-    mainHeaterPID.setProportionalGain(config.getSetting("main_heater_p_gain"));
-    mainHeaterPID.setIntegralGain(config.getSetting("main_heater_i_gain"));
-    mainHeaterPID.setDerivativeGain(config.getSetting("main_heater_d_gain"));
-    mainHeaterPID.setDesiredValue(0);
-
-    sensor_interface.begin();
-    sensor_interface.on("new_sensor", function (newSensorName, newSensorValueType) {
-
-        node330.logInfo("Found new sensor " + newSensorName);
-
-        var physicalComponent = createPhysicalComponentForSubsensor(node330, newSensorName, newSensorValueType);
-
-        var component;
-
-        if (newSensorName === config.getSetting("headsTemp_sensor")) {
-            component = headsTemp;
-        }
-        else if (newSensorName === config.getSetting("preHeaterTemp_sensor")) {
-            component = preHeaterTemp;
-        }
-        else if (newSensorName === config.getSetting("heartsTemp_sensor")) {
-            component = heartsTemp;
-        }
-        else if (newSensorName === config.getSetting("tailsTemp_sensor")) {
-            component = tailsTemp;
-        }
-        else if (newSensorName === config.getSetting("intermediateTemp_sensor")) {
-            component = intermediateTemp;
-        }
-        else if (newSensorName === config.getSetting("ambientPressure_sensor")) {
-            component = ambientPressure;
-        }
-        else if (newSensorName === config.getSetting("ambientTemp_sensor")) {
-            component = ambientTemp;
-        }
-        else if (sumpTempSensorMappings[newSensorName]) {
-            component = sumpTempSensorMappings[newSensorName];
-        }
-
-        if(component)
+        if(!new_value)
         {
-            node330.mapPhysicalComponentToVirtualComponent(physicalComponent, component);
-            component.setCalibrationOffset(config.getSetting(newSensorName + "_calibration", 0)); // Check for a calibration setting for the sensor and set it
+            custom_function.script = undefined;
+
+            if(custom_function.output)
+            {
+                custom_function.output.setValue("");
+            }
+
+            return;
+        }
+
+        try
+        {
+            var script_code = "var _return_value; function custom(){" + new_value + "}; _return_value = custom();";
+            custom_function.script = vm.createScript(script_code);
+            config.setSetting(id + "_code", new_value);
+
+        }
+        catch(e)
+        {
+            custom_function.output.setValue("ERROR: " + e.toString());
         }
     });
+    custom_function.code.setValue(config.getSetting(id + "_code", ""));
+    node330.exposeVirtualComponentToViewers(custom_function.code, false);
 
-    // When we lose a sensor
-    sensor_interface.on("timeout", function (sensorName) {
-        node330.logWarning("Sensor " + sensorName + " went offline.");
+    custom_function.enable = node330.createVirtualComponent(id + "Enable", node330.valueTypes.SWITCH);
+    node330.exposeVirtualComponentToViewers(custom_function.enable, false);
 
-        if(started)
+    custom_function.output = node330.createVirtualComponent(id + "Output", node330.valueTypes.INTEGER);
+    custom_function.output.setValue("");
+    node330.exposeVirtualComponentToViewers(custom_function.output, true);
+
+    return custom_function;
+}
+
+function create_PID_interface(node330, pidComponent, config, id, dac_channel) {
+    var pid_info = {
+        pid: pidComponent,
+        dac_channel: dac_channel
+    };
+
+    pid_info.enable = node330.createVirtualComponent(id + "PIDEnable", node330.valueTypes.SWITCH);
+    pid_info.enable.on("value_set", function(new_value){
+
+        if(new_value == true)
         {
-            started = false;
-            startStopSwitch.setValue(false);
+            node330.setVirtualComponentReadOnly(pid_info.cv, true);
+            node330.setVirtualComponentReadOnly(pid_info.integral, true);
+        }
+        else {
+            node330.setVirtualComponentReadOnly(pid_info.cv, false);
+            node330.setVirtualComponentReadOnly(pid_info.integral, false);
+        }
+
+        // If the PID was previously running, go ahead and reset some things
+        if(pid_info.is_running)
+        {
+            pid_info.pid.reset();
+            pid_info.cv.setValue(0);
+            pid_info.integral.setValue(0);
+        }
+
+        pid_info.is_running = new_value;
+    });
+    node330.exposeVirtualComponentToViewers(pid_info.enable, true);
+
+    pid_info.process_sensor = node330.createVirtualComponent(id + "ProcessSensor", node330.valueTypes.STRING);
+    pid_info.process_sensor.setValue(config.getSetting(id + "_process_sensor", ""));
+    pid_info.process_sensor.on("value_set", function(new_value){
+        config.setSetting(id + "_process_sensor", new_value);
+    });
+    node330.exposeVirtualComponentToViewers(pid_info.process_sensor, false);
+
+    pid_info.process_value = node330.createVirtualComponent(id + "ProcessValue", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.process_value, false);
+
+    pid_info.set_point = node330.createVirtualComponent(id + "SetPoint", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.set_point, false);
+
+    pid_info.p_gain = node330.createVirtualComponent(id + "PGain", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.p_gain, false);
+
+    pid_info.i_gain = node330.createVirtualComponent(id + "IGain", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.i_gain, false);
+
+    pid_info.d_gain = node330.createVirtualComponent(id + "DGain", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.d_gain, false);
+
+    pid_info.cv_min = node330.createVirtualComponent(id + "CVMin", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.cv_min, false);
+
+    pid_info.cv_max = node330.createVirtualComponent(id + "CVMax", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.cv_max, false);
+
+    pid_info.integral = node330.createVirtualComponent(id + "Integral", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.integral, true);
+
+    pid_info.cv = node330.createVirtualComponent(id + "CV", node330.valueTypes.INTEGER);
+    node330.exposeVirtualComponentToViewers(pid_info.cv, true);
+
+    pid_info.is_running = false;
+
+    return pid_info;
+}
+
+function set_dac_output(dac_channel, cv) {
+    if (sensor_interface) {
+        sensor_interface.setDAC(dac_channel, cv);
+    }
+}
+
+function update_process_sensor_for_pid(node330, pid_info)
+{
+    var process_sensor = node330.getVirtualComponentNamed(pid_info.process_sensor.getValue());
+    
+    if (process_sensor) {
+        pid_info.process_value.setValue(Number(process_sensor.getValue()));
+    }
+    /*else
+    {
+        pid_info.process_sensor.setValue("");
+        pid_info.process_value.setValue("");
+        pid_info.enable.setValue(false);
+    }*/
+}
+
+function during_MANUAL(node330) {
+    _.each(pids, function (pid_info) {
+
+        if (pid_info.enable.getValue()) {
+            // Process our PID
+            pid_info.pid.setControlValueLimits(pid_info.cv_min.getValue() || 0, pid_info.cv_max.getValue() || 0);
+            pid_info.pid.setProportionalGain(pid_info.p_gain.getValue() || 0);
+            pid_info.pid.setIntegralGain(pid_info.i_gain.getValue() || 0);
+            pid_info.pid.setDerivativeGain(pid_info.d_gain.getValue() || 0);
+            pid_info.pid.setDesiredValue(pid_info.set_point.getValue() || 0);
+
+            var new_cv = Math.round(pid_info.pid.update(pid_info.process_value.getValue() || 0));
+            pid_info.cv.setValue(new_cv);
+
+            pid_info.integral.setValue(pid_info.pid.getIntegral());
+        }
+        else {
+            // Set our integral to whatever the user sets it to
+            pid_info.pid.setIntegral(pid_info.integral.getValue() || 0);
+        }
+
+        set_dac_output(pid_info.dac_channel, pid_info.cv.getValue());
+    });
+}
+
+function during_IDLE(node330) {
+    // Turn all of our outputs off
+    _.each(pids, function (pid_info) {
+        pid_info.enable.setValue(false);
+        pid_info.cv.setValue(0);
+        set_dac_output(pid_info.dac_channel, 0);
+    });
+}
+
+function during_COOLDOWN(node330) {
+    // Automatically move to IDLE
+    mode.setValue("IDLE");
+}
+
+module.exports.setup = function (node330,
+                                 floatSwitch,
+                                 preHeaterPID,
+                                 mainHeaterPID,
+                                 pumpPID,
+                                 config) {
+    if (!sim_mode) {
+        sensor_interface = new si(node330);
+        digital.pinMode(config.getSetting("float_switch_pin"), digital.INPUT_PU);
+
+        sensor_interface.begin();
+        sensor_interface.on("new_sensor", function (newSensorName, newSensorValueType, sensorType) {
+
+            var virtualSensorName = newSensorName;
+
+            if(sensorType == "TEMPERATURE")
+            {
+                virtualSensorName = "TEMP_" + newSensorName;
+            }
+
+            node330.logInfo("Found new sensor " + virtualSensorName);
+
+            var physical_sensor = node330.createPhysicalComponentWithValueFunction(newSensorValueType, function () {
+                return sensor_interface.getSensorValue(newSensorName);
+            });
+
+            var virtual_type = node330.valueTypes.TEMP_IN_F;
+
+            if (sensorType == "PRESSURE") {
+                virtual_type = node330.valueTypes.PRES_IN_MBAR;
+            }
+
+            var virtual_sensor = node330.createVirtualComponent(virtualSensorName, virtual_type);
+
+            node330.mapPhysicalComponentToVirtualComponent(physical_sensor, virtual_sensor);
+
+            var virtual_sensor_calibration = node330.createVirtualComponent(virtualSensorName + "_CALIBRATION", virtual_type);
+            virtual_sensor_calibration.on("value_set", function (new_value) {
+                virtual_sensor.setCalibrationOffset(new_value);
+            });
+
+            node330.exposeVirtualComponentToViewers(virtual_sensor, true);
+            node330.exposeVirtualComponentToViewers(virtual_sensor_calibration, false);
+
+            if (sensorType == "TEMPERATURE") {
+                temp_probes.push(virtual_sensor);
+            }
+        });
+
+        // When we lose a sensor
+        sensor_interface.on("timeout", function (sensorName) {
+            mode.setValue("COOLDOWN");
             node330.logError("Shutting down due to " + sensorName + " going offline.");
-            node330.raiseStateEvent("STOP");
+        });
+    }
+
+    mode = node330.createVirtualComponent("mode", node330.valueTypes.STRING);
+    mode.on("value_set", function(new_value){
+
+        // If set to manual, allow PIDs to be enabled and CVs set, otherwise don't
+        if(new_value.toUpperCase() == "MANUAL")
+        {
+            _.each(pids, function (pid_info) {
+                node330.setVirtualComponentReadOnly(pid_info.enable, false);
+                node330.setVirtualComponentReadOnly(pid_info.cv, false);
+            });
         }
+        else
+        {
+            _.each(pids, function (pid_info) {
+                node330.setVirtualComponentReadOnly(pid_info.enable, true);
+                node330.setVirtualComponentReadOnly(pid_info.cv, true);
+            });
+        }
+
     });
+    mode.setValue("IDLE");
+    node330.exposeVirtualComponentToViewers(mode, false);
 
-    // Define our state engine
-    node330.defineState("IDLE", IDLE_STATE_LOOP, IDLE_STATE_ENTER);
-    node330.defineState("WARMUP", WARMUP_STATE_LOOP, WARMUP_STATE_ENTER);
-    node330.defineState("RUN_READY", RUN_READY_STATE_LOOP, RUN_READY_STATE_ENTER);
-    node330.defineState("RUNNING", RUNNING_STATE_LOOP, RUNNING_STATE_ENTER);
-    node330.defineState("SHUTDOWN", SHUTDOWN_STATE_LOOP);
+    var comments_updated = node330.createVirtualComponent("commentsUpdatedAt", node330.valueTypes.STRING);
+    comments_updated.setValue("");
 
-    node330.defineStateEvent("START", ["IDLE", "SHUTDOWN"], "RUNNING");
-    node330.defineStateEvent("STOP", ["WARMUP", "RUN_READY", "RUNNING"], "SHUTDOWN");
-    node330.defineStateEvent("MOVE_ON", "SHUTDOWN", "IDLE"); // Move from shutdown to idle
+    var comments = node330.createVirtualComponent("comments", node330.valueTypes.STRING);
+    comments.setValue("");
+    comments.on("value_set", function(){
+        var now = new Date();
+        comments_updated.setValue(now.toLocaleDateString() + " " + now.toLocaleTimeString());
+    });
+    node330.exposeVirtualComponentToViewers(comments, false);
+    node330.exposeVirtualComponentToViewers(comments_updated, true);
 
-    node330.setCurrentState("IDLE");
+    node330.exposeVirtualComponentToViewers(floatSwitch, true);
+
+    pids.push(create_PID_interface(node330, preHeaterPID, config, "preHeater", config.getSetting("preHeaterChannel")));
+    pids.push(create_PID_interface(node330, mainHeaterPID, config, "mainHeater", config.getSetting("mainHeaterChannel")));
+    pids.push(create_PID_interface(node330, pumpPID, config, "pump", config.getSetting("pumpChannel")));
+
+    custom_functions.push(create_custom_function(node330, config, "function1"));
+    custom_functions.push(create_custom_function(node330, config, "function2"));
+    custom_functions.push(create_custom_function(node330, config, "function3"));
 
     node330.addViewer(node330.restViewer());
     node330.addViewer(node330.webViewer());
-
-    if (config.getSetting("dweet_enabled")) {
-        node330.addViewer(node330.dweetViewer({
-            thing: config.getSetting("dweet_thing"),
-            key: config.getSetting("dweet_key")
-        }));
-    }
 };
 
-function IDLE_STATE_ENTER(startTime, startStopSwitch, calculatedPreheaterSetPoint, headsSetPoint, operationState, preHeaterPID, mainHeaterPID) {
-    calculatedPreheaterSetPoint.setValue(headsSetPoint.getValue());
-    feedstockDepletionCount = 0;
-    startTime.setValue("0");
-    operationState.setValue("IDLE");
-    startStopSwitch.setValue(false);
-    preHeaterPID.reset();
-    mainHeaterPID.reset();
-}
+module.exports.loop = function (node330,
+                                config,
+                                floatSwitch) {
 
-function IDLE_STATE_LOOP() {
-    // Turn off our heaters and pumps and keep it that way
-    setMainHeaterCV(0);
-    setPreHeaterCV(0);
-    setPumpCV(0);
-}
+    _.each(pids, function (pid_info) {
+        update_process_sensor_for_pid(node330, pid_info);
+    });
 
-var sumpTempWarmupReachedTime = 0;
-function WARMUP_STATE_ENTER(config, startTime, mainHeaterSetPointOffset, operationState, preHeaterPGain, preHeaterIGain, preHeaterDGain, mainHeaterPGain, mainHeaterIGain, mainHeaterDGain) {
-    preHeaterPGain.setValue(config.getSetting("pre_heater_p_gain"));
-    preHeaterIGain.setValue(config.getSetting("pre_heater_i_gain"));
-    preHeaterDGain.setValue(config.getSetting("pre_heater_d_gain"));
+    if (!sim_mode) {
+        floatSwitch.setValue(digital.digitalRead(config.getSetting("float_switch_pin")));
 
-    mainHeaterPGain.setValue(config.getSetting("warmup_main_heater_p_gain"));
-    mainHeaterIGain.setValue(config.getSetting("warmup_main_heater_i_gain"));
-    mainHeaterDGain.setValue(config.getSetting("warmup_main_heater_d_gain"));
+        // If the float switch gets activated, it means we're out of wash, and we should shut down.
+        if (floatSwitch.isOff()) {
+            float_switch_count++;
 
-    mainHeaterSetPointOffset.setValue(config.getSetting("warmup_main_heater_offset"));
-
-    sumpTempWarmupReachedTime = 0;
-
-    operationState.setValue("WARMUP");
-}
-
-function maintainWarmupTemps(config, ambientPressure, pumpFlowRate, preHeaterPID, mainHeaterPID, mainHeaterSetPointOffset, calculatedSumpTemp, preHeaterTemp) {
-    // Run our pump
-    setPumpFlowRate(pumpFlowRate.getValue());
-
-    // Warm up our pre-heater
-    preHeaterPID.setDesiredValue(config.getSetting("warmup_pre_heater_set_point"));
-
-    setPreHeaterCV(Math.round(preHeaterPID.update(preHeaterTemp.getValue())));
-
-    // Warm up our main-heater
-    var boilingPoint = getCurrentBoilingPoint(ambientPressure.getValue());
-    var mainHeaterSetPoint = (boilingPoint - mainHeaterSetPointOffset.getValue()) + 0.0;
-    mainHeaterPID.setDesiredValue(mainHeaterSetPoint);
-
-    setMainHeaterCV(Math.round(mainHeaterPID.update(calculatedSumpTemp.getValue())));
-
-    return mainHeaterSetPoint;
-}
-
-function WARMUP_STATE_LOOP(node330, config, calculatedSumpTemp, ambientPressure, pumpFlowRate, preHeaterPID, mainHeaterPID, mainHeaterSetPointOffset) {
-
-    var mainHeaterSetPoint = maintainWarmupTemps(config, ambientPressure, pumpFlowRate, preHeaterPID, mainHeaterPID, mainHeaterSetPointOffset);
-
-    // Rules:
-    // #1 Sump temp has gone past our set point at least X number of seconds ago
-    // #2 Sump temp is currently less than or equal to our set point
-    // #3 Difference between our top sump probe and bottom sump probe is greater than X
-    //
-    // After rules are met, then we can check for the enableRunSwitch, to move on to our run ready state.
-    if (sumpTempWarmupReachedTime == 0 && calculatedSumpTemp.getValue() > mainHeaterSetPoint) {
-        sumpTempWarmupReachedTime = Date.now();
-    }
-
-    // var sumpTempDelta = sumpTemp5.getValue() - sumpTemp1.getValue();
-
-    if (sumpTempWarmupReachedTime != 0 && Date.now() - sumpTempWarmupReachedTime >= 60000 && calculatedSumpTemp.getValue() <= mainHeaterSetPoint)// &&
-    // sumpTempDelta >= config.getSetting("warmup_sump_temp_delta_switch"))
-    {
-        node330.raiseStateEvent("MOVE_ON");
-    }
-}
-
-function RUN_READY_STATE_ENTER(operationState) {
-    operationState.setValue("READY");
-}
-
-function RUN_READY_STATE_LOOP(node330, enableRunSwitch, config, ambientPressure, pumpFlowRate, preHeaterPID, mainHeaterPID, mainHeaterSetPointOffset) {
-    maintainWarmupTemps(config, ambientPressure, pumpFlowRate, preHeaterPID, mainHeaterPID, mainHeaterSetPointOffset);
-
-    if (enableRunSwitch.isOn()) {
-        node330.raiseStateEvent("MOVE_ON");
-    }
-}
-
-function RUNNING_STATE_ENTER(config, startTime, operationState, preHeaterPGain, preHeaterIGain, preHeaterDGain, mainHeaterPGain, mainHeaterIGain, mainHeaterDGain, mainHeaterSetPointOffset) {
-    var now = new Date();
-    startTime.setValue(now.toISOString());
-
-    preHeaterPGain.setValue(config.getSetting("pre_heater_p_gain"));
-    preHeaterIGain.setValue(config.getSetting("pre_heater_i_gain"));
-    preHeaterDGain.setValue(config.getSetting("pre_heater_d_gain"));
-
-    mainHeaterPGain.setValue(config.getSetting("main_heater_p_gain"));
-    mainHeaterIGain.setValue(config.getSetting("main_heater_i_gain"));
-    mainHeaterDGain.setValue(config.getSetting("main_heater_d_gain"));
-
-    mainHeaterSetPointOffset.setValue(config.getSetting("main_heater_setpoint_offset"));
-    operationState.setValue("RUN PARAMS");
-}
-
-function RUNNING_STATE_LOOP(calculatedPreheaterSetPoint, headsSetPointScale, config, operationState, enableRunSwitch, tailsSetPointScale, calculatedSumpTemp, pumpFlowRate, preHeaterPID, preHeaterTemp, headsSetPoint, tailsSetPoint, headsTemp, tailsTemp, ambientPressure, mainHeaterSetPointOffset, mainHeaterPID) {
-    if (enableRunSwitch.isOn()) {
-        // Run our pump
-        setPumpFlowRate(pumpFlowRate.getValue());
-
-        var newPreHeaterSP = calculatedPreheaterSetPoint.getValue() + headsSetPointScale.getValue() * (headsSetPoint.getValue() - headsTemp.getValue());
-
-        if(currentPreHeaterPower > 0.0 || newPreHeaterSP > calculatedPreheaterSetPoint.getValue())
-        {
-            // Set our desired temp on our preheater
-            calculatedPreheaterSetPoint.setValue(newPreHeaterSP);
-        }
-
-        preHeaterPID.setDesiredValue(calculatedPreheaterSetPoint.getValue());
-
-        setPreHeaterCV(Math.round(preHeaterPID.update(preHeaterTemp.getValue())));
-
-        // Calculate our boiling point and main heater set point
-        var boilingPoint = getCurrentBoilingPoint(ambientPressure.getValue());
-        var calculatedMainHeaterSetPointOffset = mainHeaterSetPointOffset.getValue() + tailsSetPointScale.getValue() * (tailsTemp.getValue() - tailsSetPoint.getValue());
-
-        // Set our desired temp on our main heater
-        mainHeaterPID.setDesiredValue(boilingPoint - calculatedMainHeaterSetPointOffset);
-
-        setMainHeaterCV(Math.round(mainHeaterPID.update(calculatedSumpTemp.getValue())));
-    }
-    else {
-        operationState.setValue("WARMUP PARAMS");
-        maintainWarmupTemps(config, ambientPressure, pumpFlowRate, preHeaterPID, mainHeaterPID, mainHeaterSetPointOffset, calculatedSumpTemp, preHeaterTemp);
-    }
-}
-
-function SHUTDOWN_STATE_LOOP(startStopSwitch, node330, pumpFlowRate, calculatedSumpTemp, operationState) {
-    started = false;
-    startStopSwitch.setValue(false);
-
-    // Turn off our heaters
-    setMainHeaterCV(0);
-    setPreHeaterCV(0);
-
-    // But keep our pump running to keep coolant flowing
-    setPumpFlowRate(pumpFlowRate.getValue());
-
-    operationState.setValue("SHUTDOWN");
-
-    // Once we get to below 190 deg F on our main sump temp, then we can move on
-    if (calculatedSumpTemp.tempInF() <= 160.0) {
-        node330.raiseStateEvent("MOVE_ON");
-    }
-}
-
-module.exports.loop = function (node330, config, floatSwitch, startStopSwitch, headsTemp, preHeaterTemp, heartsTemp, tailsTemp, sumpTempPrimarySensor, calculatedSumpTemp, ambientTemp, ambientPressure, preHeaterPID, mainHeaterPID, headsSetPoint, pumpFlowRate, mainHeaterSetPointOffset, preHeaterPower, mainHeaterPower, mainHeaterPGain, mainHeaterIGain, mainHeaterDGain, preHeaterPGain, preHeaterIGain, preHeaterDGain, preHeaterIntegral, mainHeaterIntegral) {
-    floatSwitch.setValue(digital.digitalRead(config.getSetting("float_switch_pin")));
-
-    if (tuningMode) {
-        // Read values from our page and set them and save them to disk
-        //config.setSetting("main_heater_p_gain", mainHeaterPGain.getValue());
-        mainHeaterPID.setProportionalGain(mainHeaterPGain.getValue());
-
-        //config.setSetting("main_heater_i_gain", mainHeaterIGain.getValue());
-        mainHeaterPID.setIntegralGain(mainHeaterIGain.getValue());
-
-        //config.setSetting("main_heater_d_gain", mainHeaterDGain.getValue());
-        mainHeaterPID.setDerivativeGain(mainHeaterDGain.getValue());
-
-        //config.setSetting("pre_heater_p_gain", preHeaterPGain.getValue());
-        preHeaterPID.setProportionalGain(preHeaterPGain.getValue());
-
-        //config.setSetting("pre_heater_i_gain", preHeaterIGain.getValue());
-        preHeaterPID.setIntegralGain(preHeaterIGain.getValue());
-
-        //config.setSetting("pre_heater_d_gain", preHeaterDGain.getValue());
-        preHeaterPID.setDerivativeGain(preHeaterDGain.getValue());
-
-        if (startStopSwitch.isOn()) {
-            node330.setVirtualComponentReadOnly(preHeaterIntegral, true);
-            node330.setVirtualComponentReadOnly(mainHeaterIntegral, true);
-
-            preHeaterIntegral.setValue(preHeaterPID.getIntegral());
-            mainHeaterIntegral.setValue(mainHeaterPID.getIntegral());
-        }
-        else {
-            node330.setVirtualComponentReadOnly(preHeaterIntegral, false);
-            node330.setVirtualComponentReadOnly(mainHeaterIntegral, false);
-
-            preHeaterPID.setIntegral(preHeaterIntegral.getValue());
-            mainHeaterPID.setIntegral(mainHeaterIntegral.getValue());
+            // Give ourselves 10 counts (10 seconds) before we consider the feedstock really depleted.
+            if (float_switch_count >= 10) {
+                mode.setValue("COOLDOWN");
+                node330.logWarning("Shutting down due to feedstock depletion.");
+            }
         }
     }
 
-    var sumpTempSensorComponent = node330.getVirtualComponentNamed(sumpTempPrimarySensor.getValue());
+    // Get the current values of all of our components
+    var component_values = {};
+    _.each(node330.exposedComponents, function (component) {
 
-    // Determine if we should use the sensor name for the calculated sump temp or if we should use the maximum of all the sump temps
-    if(sumpTempSensorComponent)
-    {
-        calculatedSumpTemp.setValue(sumpTempSensorComponent.getValue());
-    }
-    else
-    {
-        // Get our max sump temp value
-        var maxSumpTemp = _.max(_.values(sumpTempSensorMappings), function (mapping) {
-            return mapping.getValue();
-        });
-
-        if (maxSumpTemp) {
-            maxSumpTemp = maxSumpTemp.getValue();
-        }
-        else {
-            maxSumpTemp = 0.0;
+        // Remove any functions themselves from the list
+        if(_.find(custom_functions, function(custom_function){
+            return (component === custom_function.code || component === custom_function.output);
+            })){
+            return;
         }
 
-        // Calculate our sump temp
-        calculatedSumpTemp.setValue(maxSumpTemp);
-    }
+        component_values[component.name] = component.getValue();
+    });
 
-    // Report to the UI, what the heater powers are
-    preHeaterPower.setValue(getPreHeaterPower());
-    mainHeaterPower.setValue(getMainHeaterPower());
+    // Evaluate our custom functions
+    _.each(custom_functions, function (custom_function) {
+        if (custom_function.enable.getValue() && custom_function.script) {
+            component_values = _.omit(component_values, ["_return_value", "custom"]);
+            try {
+                custom_function.script.runInNewContext(component_values);
+                custom_function.output.setValue(component_values["_return_value"]);
 
-    // If the float switch gets activated, it means we're out of wash, and we should shut down.
-    if (started && floatSwitch.isOff()) {
-        feedstockDepletionCount++;
+                _.each(node330.exposedComponents, function (component) {
+                    if (!component.viewerReadOnly && !_.isUndefined(component_values[component.name]) && component.getValue() !== component_values[component.name]) {
+                        component.setValue(component_values[component.name]);
+                    }
+                });
+            }
+            catch (err) {
+                custom_function.output.setValue("ERROR: " + err.toString());
+            }
+        }
+    });
 
-        // Give ourselves 10 counts (10 seconds) before we consider the feedstock really depleted.
-        if (feedstockDepletionCount >= 10) {
-            node330.logWarning("Shutting down due to feedstock depletion.");
-            node330.raiseStateEvent("STOP");
+    switch (mode.getValue().toUpperCase()) {
+        case "MANUAL": {
+            during_MANUAL(node330);
+            break;
+        }
+        case "COOLDOWN": {
+            during_COOLDOWN(node330);
+            break;
+        }
+        case "IDLE":
+        default: {
+            float_switch_count = 0;
+            during_IDLE(node330);
+            break;
         }
     }
-    // If the tails, hearts, heads or pre-heater temp is over 200F, then we know something is wrong and we should just shut down
-    else if (started && (calculatedSumpTemp.tempInF() >= 220 || tailsTemp.tempInF() >= 220 || heartsTemp.tempInF() >= 215 || headsTemp.tempInF() >= 212 || preHeaterTemp.tempInF() >= 210)) {
-        node330.logError("Shutting down due to abnormally high column temperature readings.");
-        node330.logError("Sump Temp: " + calculatedSumpTemp.tempInF());
-        node330.logError("Tails Temp: " + tailsTemp.tempInF());
-        node330.logError("Hearts Temp: " + heartsTemp.tempInF());
-        node330.logError("Heads Temp: " + headsTemp.tempInF());
-        node330.logError("Pre Heater Temp: " + preHeaterTemp.tempInF());
-        node330.raiseStateEvent("STOP");
-    }
-    else if (!started && startStopSwitch.isOn()) {
-        started = true;
-        node330.raiseStateEvent("START");
-    }
-    else if (started && startStopSwitch.isOff()) {
-        node330.raiseStateEvent("STOP");
-    }
-
-    if (floatSwitch.isOn()) {
-        feedstockDepletionCount = 0;
-    }
-}
-
-function mapRange(range1Min, range1Max, range2Min, range2Max, value) {
-    return ((value - range1Min) / (range1Max - range1Min)) * (range2Max - range2Min) + range2Min;
-}
-
-function getCurrentBoilingPoint(pressureInBar) {
-    // Calculate our boiling point
-    var baroInHG = pressureInBar * 0.02953;
-    var boilingPoint = Math.log(baroInHG) * 49.160999 + 44.93;
-
-    return parseFloat(boilingPoint.toFixed(2));
-}
-
-function setMainHeaterCV(cv) {
-    sensor_interface.setDAC(mainHeaterChannel, cv);
-    currentMainHeaterPower = Math.max(0.0, parseFloat(mapRange(mainHeaterCVMin, mainHeaterCVMax, 0.0, 100.0, cv + 0.0).toFixed(2)));
-}
-
-function getMainHeaterPower() {
-    return currentMainHeaterPower;
-}
-
-function setMainHeaterPower(power) {
-    var cv = Math.round(mapRange(0, 100, mainHeaterCVMin, mainHeaterCVMax, power));
-    setMainHeaterCV(cv);
-}
-
-function setPreHeaterCV(cv) {
-    sensor_interface.setDAC(preHeaterChannel, cv);
-    currentPreHeaterPower = Math.max(0.0, parseFloat(mapRange(preHeaterCVMin, preHeaterCVMax, 0.0, 100.0, cv + 0.0).toFixed(2)));
-}
-
-function getPreHeaterPower() {
-    return currentPreHeaterPower;
-}
-
-function setPreHeaterPower(power) {
-    var cv = Math.round(mapRange(0, 100, preHeaterCVMin, preHeaterCVMax, power));
-    setPreHeaterCV(cv);
-}
-
-function setPumpCV(cv) {
-    sensor_interface.setDAC(pumpChannel, cv);
-}
-
-function setPumpFlowRate(gallonsPerHour) {
-    var cv = Math.round(773.75 * gallonsPerHour + 1000);
-    setPumpCV(cv);
-}
+};
