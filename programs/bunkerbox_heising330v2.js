@@ -139,17 +139,16 @@ function set_dac_output(dac_channel, cv) {
 function update_process_sensor_for_pid(node330, pid_info)
 {
     var process_sensor = node330.getVirtualComponentNamed(pid_info.process_sensor.getValue());
-
-    // Don't allow the PID to be enabled if there is no process sensor
+    
     if (process_sensor) {
         pid_info.process_value.setValue(Number(process_sensor.getValue()));
     }
-    else
+    /*else
     {
         pid_info.process_sensor.setValue("");
         pid_info.process_value.setValue("");
         pid_info.enable.setValue(false);
-    }
+    }*/
 }
 
 function during_MANUAL(node330) {
