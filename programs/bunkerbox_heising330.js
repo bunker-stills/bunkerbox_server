@@ -139,7 +139,7 @@ function set_dac_output(dac_channel, cv) {
 function update_process_sensor_for_pid(node330, pid_info)
 {
     var process_sensor = node330.getVirtualComponentNamed(pid_info.process_sensor.getValue());
-    
+
     if (process_sensor) {
         pid_info.process_value.setValue(Number(process_sensor.getValue()));
     }
