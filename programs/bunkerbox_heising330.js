@@ -291,6 +291,10 @@ module.exports.setup = function (node330,
     custom_functions.push(create_custom_function(node330, config, "function2"));
     custom_functions.push(create_custom_function(node330, config, "function3"));
 
+    node330.exposeVirtualComponentToViewers(node330.createVirtualComponent("variable1", node330.valueTypes.INTEGER), false);
+    node330.exposeVirtualComponentToViewers(node330.createVirtualComponent("variable2", node330.valueTypes.INTEGER), false);
+    node330.exposeVirtualComponentToViewers(node330.createVirtualComponent("variable3", node330.valueTypes.INTEGER), false);
+
     node330.addViewer(node330.restViewer());
     node330.addViewer(node330.webViewer());
 };
@@ -324,7 +328,7 @@ module.exports.loop = function (node330,
 
         // Remove any functions themselves from the list
         if(_.find(custom_functions, function(custom_function){
-            return (component === custom_function.code || component === custom_function.output);
+            return (component === custom_function.code);
             })){
             return;
         }
