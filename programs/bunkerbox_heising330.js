@@ -299,6 +299,23 @@ module.exports.setup = function (node330,
     node330.addViewer(node330.webViewer());
 };
 
+function checkOverheat()
+{
+    for(var tempProbeIndex = 0; tempProbeIndex < temp_probes.length; tempProbeIndex++)
+    {
+        var tempProbe = temp_probes[tempProbeIndex];
+
+        if(tempProbe.getValue() >= 215)
+        {
+            mode.setValue("COOLDOWN");
+            node330.logWarning("Shutting down due to temperature overheat.");
+            return true;
+        }
+    }
+
+    return false;
+}
+
 module.exports.loop = function (node330,
                                 config,
                                 floatSwitch) {
@@ -329,7 +346,7 @@ module.exports.loop = function (node330,
         // Remove any functions themselves from the list
         if(_.find(custom_functions, function(custom_function){
             return (component === custom_function.code);
-            })){
+        })){
             return;
         }
 
@@ -358,7 +375,10 @@ module.exports.loop = function (node330,
 
     switch (mode.getValue().toUpperCase()) {
         case "MANUAL": {
-            during_MANUAL(node330);
+            if(!checkOverheat())
+            {
+                during_MANUAL(node330);
+            }
             break;
         }
         case "COOLDOWN": {
